@@ -10,7 +10,7 @@ import pandas as pd
 # PATHS
 # ============================================================
 
-BASE_DIR = Path("/mnt/d/Final sih/backend")
+BASE_DIR = Path(__file__).resolve().parent.parent
 MODEL_DIR = BASE_DIR / "models"
 
 

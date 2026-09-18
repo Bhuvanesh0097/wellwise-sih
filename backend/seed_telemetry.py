@@ -8,7 +8,7 @@ from app.supabase_client import supabase
 # PATHS
 # ============================================================
 
-BASE_DIR = Path("/mnt/d/Final sih/backend")
+BASE_DIR = Path(__file__).resolve().parent
 
 DATASET = (
     BASE_DIR

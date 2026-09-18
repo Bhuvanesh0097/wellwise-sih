@@ -2,7 +2,7 @@ from pathlib import Path
 import joblib
 import pandas as pd
 
-BASE_DIR = Path("/mnt/d/Final sih/backend")
+BASE_DIR = Path(__file__).resolve().parent
 MODEL_DIR = BASE_DIR / "models"
 DATA_DIR = BASE_DIR / "data"
 

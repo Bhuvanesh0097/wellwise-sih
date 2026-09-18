@@ -5,7 +5,7 @@ import pandas as pd
 from app.supabase_client import supabase
 
 
-BASE_DIR = Path("/mnt/d/Final sih/backend")
+BASE_DIR = Path(__file__).resolve().parent
 DATASET = BASE_DIR / "data" / "baghewala_synthetic_v1_corrected.csv"
 
 
