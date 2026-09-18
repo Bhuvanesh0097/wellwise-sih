@@ -1,0 +1,19 @@
+{
+    "project_name": "Baghewala Heavy-Oil Field Digital Twin",
+    "model": "Model 3",
+    "target": "rod_floating_next_24h",
+    "classification": true,
+    "threshold": 0.4999999999999998,
+    "test_accuracy": 0.5420689655172414,
+    "test_precision": 0.2606303151575788,
+    "test_recall": 0.7411095305832148,
+    "test_f1": 0.385640266469282,
+    "test_roc_auc": 0.6700864243688192,
+    "test_pr_auc": 0.3016467668676518,
+    "test_tn": 2888,
+    "test_fp": 2956,
+    "test_fn": 364,
+    "test_tp": 1042,
+    "random_state": 42,
+    "feature_count": 30
+}

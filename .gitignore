@@ -1,0 +1,44 @@
+# Root-level project ignores
+.env
+.env.*
+*.env
+**/.env
+**/.env.*
+
+# Secrets and credentials
+secrets/
+**/secrets/
+**/*secret*
+**/*credential*
+**/*api*key*
+**/*supabase*key*
+
+# Python cache and virtualenvs
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+**/.venv/
+venv/
+**/venv/
+
+# Node / frontend build artifacts
+node_modules/
+**/node_modules/
+frontend/dist/
+**/dist/
+
+# Local tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+coverage/
+*.log
+
+# OS/editor junk
+.DS_Store
+Thumbs.db
+.gitkeep

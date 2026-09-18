@@ -1,0 +1,13 @@
+{
+    "project_name": "Baghewala Heavy-Oil Field Digital Twin",
+    "model1_target": "future_reservoir_temperature_24h",
+    "model2_target": "future_oil_rate_24h",
+    "model1_test_mae": 4.4848,
+    "model1_test_rmse": 5.5162,
+    "model1_test_r2": 0.6501,
+    "model2_test_mae": 7.32,
+    "model2_test_rmse": 9.983,
+    "model2_test_r2": 0.8081,
+    "random_state": 42,
+    "dataset_name": "baghewala_synthetic_v1_corrected.csv"
+}
