@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 import {
   getDigitalTwin,
   getWells,
@@ -18,6 +20,7 @@ import {
   type HistoricalTelemetry,
 } from "./services/api";
 import "./App.css";
+import "./WellWiseTheme.css";
 
 type Scenario = {
   steam_rate: number;
@@ -45,36 +48,6 @@ type TrendKey =
   | "energy"
   | "spm"
   | "pump_fillage";
-
-const sectionMeta: Record<
-  ActiveSection,
-  { title: string; subtitle: string }
-> = {
-  dashboard: {
-    title: "Dashboard",
-    subtitle: "Operational overview of the selected well",
-  },
-  "digital-twin": {
-    title: "Digital Twin",
-    subtitle: "Current state and 24-hour model predictions",
-  },
-  "what-if": {
-    title: "What-If Simulation",
-    subtitle: "Engineer-controlled scenario analysis",
-  },
-  optimization: {
-    title: "Optimization",
-    subtitle: "Model-based CSS and SRP operating point",
-  },
-  review: {
-    title: "Engineer Review",
-    subtitle: "Human approval workflow for AI recommendations",
-  },
-  history: {
-    title: "Historical Trends",
-    subtitle: "Telemetry trends and engineer audit history",
-  },
-};
 
 const trendMeta: Record<
   TrendKey,
@@ -118,6 +91,64 @@ function formatParameterName(key: string) {
   return key
     .replace(/_/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function safePdfValue(value: unknown, fallback = "N/A") {
+  if (value === null || value === undefined || value === "") {
+    return fallback;
+  }
+
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      return fallback;
+    }
+
+    return Number.isInteger(value)
+      ? String(value)
+      : value.toFixed(2);
+  }
+
+  return String(value);
+}
+
+function addPdfFooter(doc: jsPDF, pageIndex: number, totalPages: number) {
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+
+  doc.setDrawColor(90, 94, 99);
+  doc.line(40, pageHeight - 32, pageWidth - 40, pageHeight - 32);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.setTextColor(120, 129, 139);
+
+  doc.text(
+    "WellWise — AI-Powered Baghewala Digital Twin",
+    40,
+    pageHeight - 18
+  );
+  doc.text(
+    "Prototype / Decision-Support System",
+    pageWidth - 168,
+    pageHeight - 18
+  );
+  doc.text(
+    `Page ${pageIndex} of ${totalPages}`,
+    pageWidth - 40,
+    pageHeight - 18,
+    { align: "right" }
+  );
+}
+
+function getReportFileName(reportType: string, wellId: string) {
+  const basename = reportType
+    .replace(/[^a-zA-Z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+
+  return `WellWise_${wellId}_${basename.replace(/\s+/g, "_")}.pdf`;
 }
 
 function getTrendValue(
@@ -319,17 +350,22 @@ function App() {
 
   const [telemetryHistory, setTelemetryHistory] =
     useState<HistoricalTelemetry[]>([]);
-  const [systemHealth, setSystemHealth] =
-  useState<SystemHealth | null>(null);
-
-const [systemHealthLoading, setSystemHealthLoading] =
-  useState(false);
-
-const [showSystemStatus, setShowSystemStatus] =
-  useState(false);
-
   const [telemetryHistoryLoading, setTelemetryHistoryLoading] =
     useState(false);
+  const [systemHealth, setSystemHealth] =
+    useState<SystemHealth | null>(null);
+
+  const [systemHealthLoading, setSystemHealthLoading] =
+    useState(false);
+
+  const [showSystemStatus, setShowSystemStatus] =
+    useState(false);
+
+  const [showEngineerLogin, setShowEngineerLogin] =
+    useState(false);
+
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
 
   const [trendMetric, setTrendMetric] =
     useState<TrendKey>("oil_rate");
@@ -802,54 +838,611 @@ const [showSystemStatus, setShowSystemStatus] =
   // ----------------------------------------------------------
 
   function renderTopBar() {
-    const meta = sectionMeta[activeSection];
+    function getReportLabel() {
+      switch (activeSection) {
+        case "what-if":
+          return "Download Scenario Report";
+        case "optimization":
+          return "Download Optimization Report";
+        case "review":
+          return decisionResult
+            ? "Download Approved Report"
+            : "Download Recommendation Report";
+        case "history":
+          return "Download Historical Report";
+        default:
+          return "Download Dashboard Report";
+      }
+    }
+
+    function downloadCurrentReport() {
+      const reportTypeMap = {
+        dashboard: "Dashboard Report",
+        "digital-twin": "Digital Twin Report",
+        "what-if": "What-If Report",
+        optimization: "Optimization Report",
+        review: decisionResult?.decision === "APPROVE"
+          ? "Engineer Approved Report"
+          : decisionResult?.decision === "MODIFY"
+            ? "Engineer Modified Report"
+            : decisionResult?.decision === "REJECT"
+              ? "Engineer Rejected Report"
+              : "Recommendation Report",
+        history: "Historical Trends Report",
+      } as const;
+
+      const reportType = reportTypeMap[activeSection];
+      const doc = new jsPDF({ unit: "pt", format: "a4" });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const margin = 40;
+      const generatedAt = new Date().toISOString();
+
+      const totalPages = () => doc.getNumberOfPages();
+      const pushFooter = (pageNumber: number) => addPdfFooter(doc, pageNumber, totalPages());
+
+      const addHeader = (title: string) => {
+        doc.setFillColor(19, 25, 31);
+        doc.rect(0, 0, pageWidth, 60, "F");
+
+        doc.setTextColor(255, 255, 255);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(20);
+        doc.text("WELLWISE", margin, 28);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.setTextColor(170, 179, 190);
+        doc.text("AI-Powered Baghewala Digital Twin", margin, 46);
+
+        doc.setTextColor(200, 117, 39);
+        doc.setFontSize(10);
+        doc.text(reportType.toUpperCase(), pageWidth - margin, 28, { align: "right" });
+
+        doc.setTextColor(30, 36, 43);
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(16);
+        doc.text(title, margin, 92);
+      };
+
+      const wellField = data?.well.field ?? wells.find((item) => item.well_id === selectedWell)?.field_name ?? "N/A";
+      const wellReservoir = data?.well.reservoir ?? wells.find((item) => item.well_id === selectedWell)?.reservoir_name ?? "N/A";
+      const wellFormation = data?.well.formation ?? wells.find((item) => item.well_id === selectedWell)?.formation_name ?? "N/A";
+      const wellStatus = data?.well.status ?? wells.find((item) => item.well_id === selectedWell)?.well_status ?? "N/A";
+
+      const baseMetaRows: Array<[string, string]> = [
+        ["Report Type", reportType],
+        ["Well ID", safePdfValue(selectedWell)],
+        ["Field", safePdfValue(wellField)],
+        ["Reservoir", safePdfValue(wellReservoir)],
+        ["Formation", safePdfValue(wellFormation)],
+        ["Well Status", safePdfValue(wellStatus)],
+        ["Data Source", "Existing WellWise frontend state / API response"],
+        ["Generated", safePdfValue(generatedAt)],
+      ];
+
+      let currentY = 116;
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const safeBottom = pageHeight - 80; // leave room for footer + disclaimer
+
+      const ensureSpace = (needed: number) => {
+        if (currentY + needed > safeBottom) {
+          doc.addPage();
+          currentY = 40;
+        }
+      };
+
+      const addSectionTitle = (title: string) => {
+        ensureSpace(60);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(12);
+        doc.setTextColor(32, 39, 47);
+        doc.text(title, margin, currentY);
+        currentY += 6;
+      };
+
+      const addMetaTable = (title: string, rows: Array<[string, string]>) => {
+        addSectionTitle(title);
+
+        autoTable(doc, {
+          startY: currentY,
+          head: [["Field", "Value"]],
+          body: rows,
+          theme: "grid",
+          margin: { left: margin, right: margin },
+          styles: { fontSize: 9, cellPadding: 6, textColor: [31, 38, 45], lineColor: [172, 176, 182], lineWidth: 0.25 },
+          headStyles: { fillColor: [18, 23, 29], textColor: [255, 255, 255], fontStyle: "bold" },
+          alternateRowStyles: { fillColor: [247, 249, 250] },
+          didDrawPage: () => {
+            // reset currentY on new pages created by autotable
+          },
+        });
+
+        currentY = (doc as any).lastAutoTable?.finalY ?? currentY;
+        currentY += 14;
+      };
+
+      const addRowsTable = (title: string, rows: Array<[string, string]>) => {
+        addSectionTitle(title);
+
+        autoTable(doc, {
+          startY: currentY,
+          head: [["Parameter", "Value"]],
+          body: rows,
+          theme: "grid",
+          margin: { left: margin, right: margin },
+          styles: { fontSize: 9, cellPadding: 6, textColor: [31, 38, 45], lineColor: [172, 176, 182], lineWidth: 0.25 },
+          headStyles: { fillColor: [174, 108, 32], textColor: [255, 255, 255], fontStyle: "bold" },
+          alternateRowStyles: { fillColor: [247, 249, 250] },
+        });
+
+        currentY = (doc as any).lastAutoTable?.finalY ?? currentY;
+        currentY += 14;
+      };
+
+      const writeStatusNotice = (statusText: string) => {
+        ensureSpace(52);
+        doc.setFillColor(248, 242, 232);
+        doc.roundedRect(margin, currentY, pageWidth - margin * 2, 36, 6, 6, "F");
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(120, 72, 20);
+        doc.setFontSize(11);
+        doc.text(statusText, margin + 12, currentY + 20);
+        doc.setTextColor(31, 38, 45);
+        currentY += 52;
+      };
+
+      const addDisclaimer = () => {
+        ensureSpace(40);
+        doc.setFont("helvetica", "italic");
+        doc.setFontSize(8);
+        doc.setTextColor(100, 109, 121);
+        doc.text(
+          "Prototype decision-support output. Results are based on the current WellWise model and available data and are intended for engineering review, not autonomous control.",
+          margin,
+          currentY,
+          { maxWidth: pageWidth - margin * 2 }
+        );
+        currentY += 30;
+      };
+
+      const getDecisionStatus = () => {
+        if (decisionResult?.decision === "APPROVE") return "APPROVED";
+        if (decisionResult?.decision === "MODIFY") return "MODIFIED";
+        if (decisionResult?.decision === "REJECT") return "REJECTED";
+        return "PENDING";
+      };
+
+      const getRecommendation = () => optimizationData?.recommendation ?? null;
+
+      if (activeSection === "dashboard") {
+        addHeader("Operational Dashboard Report");
+        addMetaTable("Report Information", baseMetaRows);
+
+        addRowsTable("Current Well State", [
+          ["Timestamp", safePdfValue(data?.telemetry.timestamp)],
+          ["Reservoir Temperature", `${safePdfValue(data?.telemetry.reservoir_temperature)} °C`],
+          ["Reservoir Pressure", safePdfValue(data?.telemetry.reservoir_pressure)],
+          ["Oil Viscosity", safePdfValue(data?.telemetry.oil_viscosity)],
+          ["Current Oil Rate", `${safePdfValue(data?.telemetry.oil_rate)} BOPD`],
+          ["Current Water Rate", safePdfValue(data?.telemetry.water_rate)],
+          ["Current Energy", safePdfValue(data?.telemetry.energy)],
+          ["Fluid Level", safePdfValue(data?.telemetry.fluid_level)],
+          ["SPM", safePdfValue(data?.telemetry.spm)],
+          ["Stroke Length", safePdfValue(data?.telemetry.stroke_length)],
+          ["VFD Frequency", `${safePdfValue(data?.telemetry.vfd_frequency)} Hz`],
+          ["Rod Load", safePdfValue(data?.telemetry.rod_load)],
+          ["Pump Load", safePdfValue(data?.telemetry.pump_load)],
+          ["Pump Fillage", `${safePdfValue(data?.telemetry.pump_fillage)} %`],
+        ]);
+
+        addRowsTable("24-Hour Outlook", [
+          ["Predicted Reservoir Temperature", `${safePdfValue(data?.prediction_24h.reservoir_temperature)} °C`],
+          ["Predicted Oil Rate", `${safePdfValue(data?.prediction_24h.oil_rate)} BOPD`],
+          ["Rod Floating Probability", `${safePdfValue(data?.prediction_24h.rod_floating_probability)} %`],
+          ["Rod Floating Risk %", `${safePdfValue(data?.prediction_24h.rod_floating_risk_pct)} %`],
+          ["Rod Status", safePdfValue(data?.prediction_24h.rod_status)],
+        ]);
+
+        addRowsTable("System Status", [
+          ["Telemetry Status", safePdfValue(data?.system.telemetry ?? systemHealth?.status ?? "N/A")],
+          ["Model Status", safePdfValue(data?.system.models ?? systemHealth?.message ?? "N/A")],
+          ["Optimizer Status", safePdfValue(data?.system.optimizer ?? (optimizationData?.status ?? "N/A"))],
+          ["Autonomous Control", safePdfValue(data?.system.autonomous_control ? "Enabled" : "Disabled")],
+        ]);
+
+        writeStatusNotice("Telemetry is running from the current WellWise frontend state.");
+        addDisclaimer();
+      } else if (activeSection === "digital-twin") {
+        addHeader("Digital Twin Assessment Report");
+        addMetaTable("Well Identification", [
+          ["Well ID", safePdfValue(selectedWell)],
+          ["Field", safePdfValue(wellField)],
+          ["Reservoir", safePdfValue(wellReservoir)],
+          ["Formation", safePdfValue(wellFormation)],
+          ["Well Status", safePdfValue(wellStatus)],
+        ]);
+
+        addRowsTable("Current State", [
+          ["Timestamp", safePdfValue(data?.telemetry.timestamp)],
+          ["Telemetry Source", safePdfValue(data?.telemetry.source)],
+          ["Reservoir Temperature", `${safePdfValue(data?.telemetry.reservoir_temperature)} °C`],
+          ["Reservoir Pressure", safePdfValue(data?.telemetry.reservoir_pressure)],
+          ["Oil Viscosity", safePdfValue(data?.telemetry.oil_viscosity)],
+          ["Oil Rate", `${safePdfValue(data?.telemetry.oil_rate)} BOPD`],
+          ["Water Rate", safePdfValue(data?.telemetry.water_rate)],
+          ["Energy", safePdfValue(data?.telemetry.energy)],
+          ["Fluid Level", safePdfValue(data?.telemetry.fluid_level)],
+          ["SPM", safePdfValue(data?.telemetry.spm)],
+          ["Stroke Length", safePdfValue(data?.telemetry.stroke_length)],
+          ["VFD Frequency", `${safePdfValue(data?.telemetry.vfd_frequency)} Hz`],
+          ["Rod Load", safePdfValue(data?.telemetry.rod_load)],
+          ["Pump Load", safePdfValue(data?.telemetry.pump_load)],
+          ["Pump Fillage", `${safePdfValue(data?.telemetry.pump_fillage)} %`],
+        ]);
+
+        addRowsTable("AI 24-Hour Prediction", [
+          ["Predicted Reservoir Temperature", `${safePdfValue(data?.prediction_24h.reservoir_temperature)} °C`],
+          ["Predicted Oil Rate", `${safePdfValue(data?.prediction_24h.oil_rate)} BOPD`],
+          ["Rod Floating Probability", `${safePdfValue(data?.prediction_24h.rod_floating_probability)} %`],
+          ["Rod Floating Risk %", `${safePdfValue(data?.prediction_24h.rod_floating_risk_pct)} %`],
+          ["Rod Status", safePdfValue(data?.prediction_24h.rod_status)],
+        ]);
+
+        addRowsTable("Digital Twin / System Status", [
+          ["Telemetry State", safePdfValue(data?.system.telemetry ?? "N/A")],
+          ["Model State", safePdfValue(data?.system.models ?? "N/A")],
+          ["Optimizer State", safePdfValue(data?.system.optimizer ?? "N/A")],
+          ["Autonomous Control State", safePdfValue(data?.system.autonomous_control ? "Enabled" : "Disabled")],
+        ]);
+
+        writeStatusNotice("Interpretation is limited to the current application presentation and model outputs.");
+        addDisclaimer();
+      } else if (activeSection === "what-if") {
+        addHeader("What-If Simulation Report");
+        addMetaTable("Simulation Information", [
+          ["Well ID", safePdfValue(selectedWell)],
+          ["Timestamp", safePdfValue(whatIfResult?.timestamp ?? new Date().toISOString())],
+          ["Simulation Type", safePdfValue(whatIfResult?.simulation_type ?? "Pending")],
+          ["Saved / Not Saved", safePdfValue(whatIfResult?.saved_to_database ? "Saved" : "Not saved")],
+        ]);
+
+        addRowsTable("Baseline State", [
+          ["Baseline Temperature", `${safePdfValue(whatIfResult?.baseline.temperature ?? data?.prediction_24h.reservoir_temperature)} °C`],
+          ["Baseline Oil Rate", `${safePdfValue(whatIfResult?.baseline.oil_rate ?? data?.telemetry.oil_rate)} BOPD`],
+          ["Baseline Rod Risk %", `${safePdfValue(whatIfResult?.baseline.rod_risk_pct ?? data?.prediction_24h.rod_floating_risk_pct)} %`],
+          ["Baseline Energy", safePdfValue(whatIfResult?.baseline.energy ?? data?.telemetry.energy)],
+        ]);
+
+        addRowsTable("Scenario Parameters", [
+          ["Steam Rate", safePdfValue(scenario.steam_rate)],
+          ["Steam Temperature", `${safePdfValue(scenario.steam_temperature)} °F`],
+          ["Injection Pressure", safePdfValue(scenario.injection_pressure)],
+          ["Injection Duration", `${safePdfValue(scenario.injection_duration)} hr`],
+          ["Soak Time", `${safePdfValue(scenario.soak_time)} hr`],
+          ["Steam Volume", safePdfValue(whatIfResult?.scenario.steam_volume ?? "N/A")],
+          ["Stroke Length", safePdfValue(scenario.stroke_length)],
+          ["SPM", safePdfValue(scenario.spm)],
+          ["VFD Frequency", `${safePdfValue(scenario.vfd_frequency)} Hz`],
+        ]);
+
+        addRowsTable("Predicted Scenario Outcome", [
+          ["Predicted Temperature", `${safePdfValue(whatIfResult?.predicted_outcome.temperature ?? "N/A")} °C`],
+          ["Predicted Oil Rate", `${safePdfValue(whatIfResult?.predicted_outcome.oil_rate ?? "N/A")} BOPD`],
+          ["Predicted Rod Risk %", `${safePdfValue(whatIfResult?.predicted_outcome.rod_risk_pct ?? "N/A")} %`],
+          ["Rod Status", safePdfValue(whatIfResult?.predicted_outcome.rod_status ?? "N/A")],
+          ["Predicted Energy", safePdfValue(whatIfResult?.predicted_outcome.energy ?? "N/A")],
+          ["SOR Proxy", safePdfValue(whatIfResult?.predicted_outcome.sor_proxy ?? "N/A")],
+        ]);
+
+        addRowsTable("Change Versus Baseline", [
+          ["Oil Change %", `${safePdfValue(whatIfResult?.changes_vs_baseline.oil_change_pct ?? "N/A")}%`],
+          ["Risk Change %", `${safePdfValue(whatIfResult?.changes_vs_baseline.risk_change_pct ?? "N/A")}%`],
+          ["Energy Change %", `${safePdfValue(whatIfResult?.changes_vs_baseline.energy_change_pct ?? "N/A")}%`],
+        ]);
+
+        writeStatusNotice(`Scenario status: ${whatIfResult ? "Available from current What-If response" : "No scenario result captured yet"}`);
+        addDisclaimer();
+      } else if (activeSection === "optimization") {
+        const recommendation = getRecommendation();
+        addHeader("CSS + SRP Optimization Report");
+        addMetaTable("Report Information", [
+          ["Well ID", safePdfValue(selectedWell)],
+          ["Timestamp", safePdfValue(optimizationData?.timestamp ?? new Date().toISOString())],
+          ["Optimizer Version", safePdfValue(recommendation ? "V2.1" : "N/A")],
+          ["Optimizer Status", safePdfValue(optimizationData?.status ?? "N/A")],
+          ["Candidate Count", safePdfValue(optimizationData?.feasible_candidates ?? "N/A")],
+          ["Feasible Candidate Count", safePdfValue(optimizationData?.feasible_candidates ?? "N/A")],
+          ["Prediction ID", safePdfValue(optimizationData?.prediction_id ?? "N/A")],
+          ["Recommendation ID", safePdfValue(optimizationData?.recommendation_id ?? "N/A")],
+        ]);
+
+        addRowsTable("Baseline", [
+          ["Reservoir Temperature", `${safePdfValue(optimizationData?.baseline.temperature ?? data?.telemetry.reservoir_temperature)} °C`],
+          ["Oil Rate", `${safePdfValue(optimizationData?.baseline.oil ?? data?.telemetry.oil_rate)} BOPD`],
+          ["Rod Risk %", `${safePdfValue(optimizationData?.baseline.risk ?? data?.prediction_24h.rod_floating_risk_pct)} %`],
+          ["Energy", safePdfValue(optimizationData?.baseline.energy ?? data?.telemetry.energy)],
+        ]);
+
+        addRowsTable("Recommended CSS Parameters", [
+          ["Steam Rate", safePdfValue(recommendation?.steam_rate ?? "N/A")],
+          ["Steam Temperature", `${safePdfValue(recommendation?.steam_temperature ?? "N/A")} °F`],
+          ["Injection Pressure", safePdfValue(recommendation?.injection_pressure ?? "N/A")],
+          ["Injection Duration", `${safePdfValue(recommendation?.injection_duration ?? "N/A")} hr`],
+          ["Soak Time", `${safePdfValue(recommendation?.soak_time ?? "N/A")} hr`],
+          ["Steam Volume", safePdfValue(recommendation?.steam_volume ?? "N/A")],
+        ]);
+
+        addRowsTable("Recommended SRP Parameters", [
+          ["Stroke Length", safePdfValue(recommendation?.stroke_length ?? "N/A")],
+          ["SPM", safePdfValue(recommendation?.spm ?? "N/A")],
+          ["VFD Frequency", `${safePdfValue(recommendation?.vfd_frequency ?? "N/A")} Hz`],
+        ]);
+
+        addRowsTable("Predicted Recommended Outcome", [
+          ["Predicted Reservoir Temperature", `${safePdfValue(recommendation?.predicted_temperature ?? "N/A")} °C`],
+          ["Predicted Oil Rate", `${safePdfValue(recommendation?.predicted_oil_rate ?? "N/A")} BOPD`],
+          ["Predicted Rod Risk %", `${safePdfValue(recommendation?.predicted_rod_risk ?? "N/A")} %`],
+          ["Predicted Energy", safePdfValue(recommendation?.predicted_energy ?? "N/A")],
+          ["SOR Proxy", safePdfValue(recommendation?.sor_proxy ?? "N/A")],
+        ]);
+
+        addRowsTable("Performance Change", [
+          ["Oil Change %", `${safePdfValue(recommendation?.oil_change_pct ?? "N/A")}%`],
+          ["Risk Change %", `${safePdfValue(recommendation?.risk_change_pct ?? "N/A")}%`],
+          ["Energy Change %", `${safePdfValue(recommendation?.energy_change_pct ?? "N/A")}%`],
+          ["Optimization Score", safePdfValue(recommendation?.optimization_score ?? "N/A")],
+        ]);
+
+        writeStatusNotice(`Optimizer status: ${safePdfValue(optimizationData?.status ?? "N/A")}`);
+        addDisclaimer();
+      } else if (activeSection === "review") {
+        const recommendation = getRecommendation();
+        addHeader(
+          decisionResult?.decision === "APPROVE"
+            ? "Engineer Approved Recommendation Report"
+            : decisionResult?.decision === "MODIFY"
+              ? "Engineer Modified Recommendation Report"
+              : decisionResult?.decision === "REJECT"
+                ? "Rejected Recommendation Report"
+                : "AI Recommendation Report"
+        );
+
+        addMetaTable("Recommendation Information", [
+          ["Well ID", safePdfValue(selectedWell)],
+          ["Recommendation ID", safePdfValue(optimizationData?.recommendation_id ?? "N/A")],
+          ["Prediction ID", safePdfValue(optimizationData?.prediction_id ?? "N/A")],
+          ["Timestamp", safePdfValue(optimizationData?.timestamp ?? new Date().toISOString())],
+          ["Optimizer Version", safePdfValue(recommendation ? "V2.1" : "N/A")],
+          ["Recommendation Status", safePdfValue(getDecisionStatus())],
+        ]);
+
+        addRowsTable("Current / Baseline State", [
+          ["Temperature", `${safePdfValue(data?.telemetry.reservoir_temperature ?? optimizationData?.baseline.temperature)} °C`],
+          ["Oil Rate", `${safePdfValue(data?.telemetry.oil_rate ?? optimizationData?.baseline.oil)} BOPD`],
+          ["Rod Risk", `${safePdfValue(data?.prediction_24h.rod_floating_risk_pct ?? optimizationData?.baseline.risk)} %`],
+          ["Energy", safePdfValue(data?.telemetry.energy ?? optimizationData?.baseline.energy)],
+        ]);
+
+        addRowsTable("Recommended CSS", [
+          ["Steam Rate", safePdfValue(recommendation?.steam_rate ?? "N/A")],
+          ["Steam Temperature", `${safePdfValue(recommendation?.steam_temperature ?? "N/A")} °F`],
+          ["Injection Pressure", safePdfValue(recommendation?.injection_pressure ?? "N/A")],
+          ["Injection Duration", `${safePdfValue(recommendation?.injection_duration ?? "N/A")} hr`],
+          ["Soak Time", `${safePdfValue(recommendation?.soak_time ?? "N/A")} hr`],
+          ["Steam Volume", safePdfValue(recommendation?.steam_volume ?? "N/A")],
+        ]);
+
+        addRowsTable("Recommended SRP", [
+          ["Stroke Length", safePdfValue(recommendation?.stroke_length ?? "N/A")],
+          ["SPM", safePdfValue(recommendation?.spm ?? "N/A")],
+          ["VFD Frequency", `${safePdfValue(recommendation?.vfd_frequency ?? "N/A")} Hz`],
+        ]);
+
+        addRowsTable("Predicted Outcome", [
+          ["Reservoir Temperature", `${safePdfValue(recommendation?.predicted_temperature ?? "N/A")} °C`],
+          ["Oil Rate", `${safePdfValue(recommendation?.predicted_oil_rate ?? "N/A")} BOPD`],
+          ["Rod Risk %", `${safePdfValue(recommendation?.predicted_rod_risk ?? "N/A")} %`],
+          ["Rod Status", safePdfValue(data?.prediction_24h.rod_status ?? "N/A")],
+          ["Energy", safePdfValue(recommendation?.predicted_energy ?? "N/A")],
+          ["SOR Proxy", safePdfValue(recommendation?.sor_proxy ?? "N/A")],
+        ]);
+
+        addRowsTable("Impact", [
+          ["Oil Change %", `${safePdfValue(recommendation?.oil_change_pct ?? "N/A")}%`],
+          ["Risk Change %", `${safePdfValue(recommendation?.risk_change_pct ?? "N/A")}%`],
+          ["Energy Change %", `${safePdfValue(recommendation?.energy_change_pct ?? "N/A")}%`],
+          ["Optimization Score", safePdfValue(recommendation?.optimization_score ?? "N/A")],
+        ]);
+
+        if (decisionResult) {
+          addRowsTable("Engineer Decision", [
+            ["Decision", safePdfValue(decisionResult.decision)],
+            ["Engineer ID", safePdfValue(decisionResult.decision_id ? `eng-${decisionResult.decision_id}` : "N/A")],
+            ["Decision Timestamp", safePdfValue(decisionResult.created_at ?? new Date().toISOString())],
+            ["Notes", safePdfValue(decisionResult.notes ?? "N/A")],
+            ["Rejection Reason", safePdfValue(decisionResult.rejection_reason ?? "N/A")],
+          ]);
+        }
+
+        writeStatusNotice(`Decision status: ${getDecisionStatus()}`);
+        addDisclaimer();
+      } else if (activeSection === "history") {
+        const metricLabel = trendMeta[trendMetric].label;
+        const metricValues = telemetryHistory.map((row) => row[trendMetric]);
+        const minimum = metricValues.length ? Math.min(...metricValues) : null;
+        const maximum = metricValues.length ? Math.max(...metricValues) : null;
+        const average = metricValues.length ? metricValues.reduce((sum, value) => sum + value, 0) / metricValues.length : null;
+        const latest = metricValues.length ? metricValues[metricValues.length - 1] : null;
+
+        addHeader("Historical Telemetry Trends Report");
+        addMetaTable("Report Information", [
+          ["Well ID", safePdfValue(selectedWell)],
+          ["Selected Metric", metricLabel],
+          ["Time Range Represented", `${telemetryHistory.length} points`],
+          ["Data Point Count", safePdfValue(telemetryHistory.length)],
+          ["Generated Timestamp", safePdfValue(generatedAt)],
+        ]);
+
+        addRowsTable("Metric Summary", [
+          ["Minimum", `${safePdfValue(minimum ?? "N/A")}${trendMeta[trendMetric].unit ? ` ${trendMeta[trendMetric].unit}` : ""}`],
+          ["Maximum", `${safePdfValue(maximum ?? "N/A")}${trendMeta[trendMetric].unit ? ` ${trendMeta[trendMetric].unit}` : ""}`],
+          ["Average", `${safePdfValue(average ?? "N/A")}${trendMeta[trendMetric].unit ? ` ${trendMeta[trendMetric].unit}` : ""}`],
+          ["Latest Value", `${safePdfValue(latest ?? "N/A")}${trendMeta[trendMetric].unit ? ` ${trendMeta[trendMetric].unit}` : ""}`],
+        ]);
+
+        const historicalRows = telemetryHistory.slice().reverse().map((entry) => [
+          safePdfValue(formatDateTime(entry.timestamp)),
+          `${safePdfValue(entry[trendMetric])}${trendMeta[trendMetric].unit ? ` ${trendMeta[trendMetric].unit}` : ""}`,
+          safePdfValue(trendMeta[trendMetric].unit || "value"),
+        ]);
+
+        addSectionTitle("Historical Data Points");
+
+        autoTable(doc, {
+          startY: currentY,
+          head: [["Timestamp", "Value", "Unit"]],
+          body: historicalRows,
+          theme: "grid",
+          margin: { left: margin, right: margin },
+          styles: { fontSize: 8, cellPadding: 5, textColor: [31, 38, 45], lineColor: [172, 176, 182], lineWidth: 0.25 },
+          headStyles: { fillColor: [18, 23, 29], textColor: [255, 255, 255], fontStyle: "bold" },
+          alternateRowStyles: { fillColor: [247, 249, 250] },
+        });
+
+        currentY = (doc as any).lastAutoTable?.finalY ?? currentY;
+        currentY += 14;
+
+        addDisclaimer();
+      }
+
+      const totalPageCount = doc.getNumberOfPages();
+      for (let index = 1; index <= totalPageCount; index += 1) {
+        doc.setPage(index);
+        pushFooter(index);
+      }
+
+      const reportTypeLabel = reportType.replace(/\s+/g, "_");
+      doc.save(getReportFileName(reportTypeLabel, selectedWell || "Well"));
+    }
 
     return (
-      <header className="topbar">
-        <div>
-          <h1>WELLWISE</h1>
-          <p>AI-Powered Baghewala Digital Twin</p>
-
-          <div className="topbar-section">
-            <strong>{meta.title}</strong>
-            <span>{meta.subtitle}</span>
+      <>
+        <header className="topbar topbar-hero">
+          <img className="topbar-hero-bg" src="/oil-well.png" alt="" aria-hidden="true" />
+          <div className="topbar-hero-overlay" />
+          <div className="topbar-brand">
+            <h1>WellWise</h1>
+            <p>AI-Powered Baghewala Digital Twin</p>
           </div>
-        </div>
 
-        <div className="topbar-actions">
-          <select
-            className="well-selector"
-            value={selectedWell}
-            onChange={(event) => {
-              setSelectedWell(event.target.value);
-              setScenarioWellId("");
-              setWhatIfResult(null);
-              setOptimizationData(null);
-              setDecisionResult(null);
-              setShowRejectBox(false);
-              setRejectionReason("");
-              setError(null);
-            }}
-            disabled={
-              loadingTwin || wells.length === 0
-            }
-          >
-            {wells.map((well) => (
-              <option
-                key={well.well_id}
-                value={well.well_id}
+          <div className="topbar-actions">
+            <button
+              type="button"
+              className="header-report-button"
+              onClick={downloadCurrentReport}
+            >
+              {getReportLabel()}
+            </button>
+
+            <select
+              className="well-selector"
+              value={selectedWell}
+              onChange={(event) => {
+                setSelectedWell(event.target.value);
+                setScenarioWellId("");
+                setWhatIfResult(null);
+                setOptimizationData(null);
+                setDecisionResult(null);
+                setShowRejectBox(false);
+                setRejectionReason("");
+                setError(null);
+              }}
+              disabled={
+                loadingTwin || wells.length === 0
+              }
+            >
+              {wells.map((well) => (
+                <option
+                  key={well.well_id}
+                  value={well.well_id}
+                >
+                  {well.well_id}
+                </option>
+              ))}
+            </select>
+
+            <button
+              type="button"
+              className="engineer-login-button"
+              onClick={() => setShowEngineerLogin(true)}
+            >
+              Engineer Login
+            </button>
+
+            <div className="system-status">
+              <span className="status-dot" />
+              SIMULATED TELEMETRY
+            </div>
+          </div>
+        </header>
+
+        {showEngineerLogin && (
+          <div className="engineer-login-overlay" onClick={() => setShowEngineerLogin(false)}>
+            <div className="engineer-login-modal" onClick={(event) => event.stopPropagation()}>
+              <div className="engineer-login-header">
+                <div>
+                  <span>Engineering access</span>
+                  <h3>Engineer Access</h3>
+                </div>
+                <button type="button" className="login-close-button" onClick={() => setShowEngineerLogin(false)}>
+                  ×
+                </button>
+              </div>
+
+              <form
+                className="engineer-login-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  setShowEngineerLogin(false);
+                  setLoginEmail("");
+                  setLoginPassword("");
+                }}
               >
-                {well.well_id}
-              </option>
-            ))}
-          </select>
+                <label>
+                  <span>Employee ID / Email</span>
+                  <input
+                    type="email"
+                    value={loginEmail}
+                    onChange={(event) => setLoginEmail(event.target.value)}
+                    placeholder="engineer@wellwise.ai"
+                  />
+                </label>
 
-          <div className="system-status">
-            <span className="status-dot" />
-            SIMULATED TELEMETRY
+                <label>
+                  <span>Password</span>
+                  <input
+                    type="password"
+                    value={loginPassword}
+                    onChange={(event) => setLoginPassword(event.target.value)}
+                    placeholder="••••••••"
+                  />
+                </label>
+
+                <button type="submit" className="login-submit-button">
+                  Sign In
+                </button>
+
+                <p className="login-disclaimer">
+                  Prototype Demonstration
+                  <br />
+                  Authentication is planned for production deployment.
+                </p>
+              </form>
+            </div>
           </div>
-        </div>
-      </header>
+        )}
+      </>
     );
   }
 
@@ -1174,9 +1767,6 @@ const [showSystemStatus, setShowSystemStatus] =
           ========================================= */}
 
       <section className="dashboard-main-grid">
-
-        {/* Operating State */}
-
         <div className="dashboard-panel-large">
           <div className="dashboard-panel-header">
             <div>
@@ -1252,9 +1842,9 @@ const [showSystemStatus, setShowSystemStatus] =
             </div>
           </div>
         </div>
+      </section>
 
-        {/* Digital Twin Outlook */}
-
+      <section className="dashboard-main-grid dashboard-secondary-grid">
         <div className="dashboard-panel-large">
           <div className="dashboard-panel-header">
             <div>
